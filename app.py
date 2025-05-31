@@ -3,6 +3,7 @@ from PIL import Image
 import pytesseract
 import re
 import io
+import os
 
 app = Flask(__name__)
 
@@ -51,4 +52,6 @@ def extract():
     return jsonify({'data': parsed_data})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=10000, debug=True)
+
