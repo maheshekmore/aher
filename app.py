@@ -2,10 +2,18 @@ import os
 from flask import Flask, request, jsonify, send_file, render_template_string
 from PIL import Image
 import pytesseract
-import io
 import pandas as pd
+import io
 
 app = Flask(__name__)
+
+# Optional: Local development config
+# os.environ['TESSDATA_PREFIX'] = '/usr/share/tesseract-ocr/4.00/tessdata'
+# pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'  # Update this path as per your system
+
+# @app.route('/')
+# def home():
+#     return 'Aher OCR API is running. Use /extract to POST image.'
 
 # HTML for basic frontend
 UPLOAD_FORM_HTML = """
@@ -29,38 +37,53 @@ UPLOAD_FORM_HTML = """
 def home():
     return render_template_string(UPLOAD_FORM_HTML)
 
-@app.route("/extract", methods=["POST"])
+@app.route('/extract', methods=['POST'])
 def extract_text():
-    if "image" not in request.files:
-        return "Image file is missing", 400
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image uploaded'}), 400
 
-    image = Image.open(request.files["image"])
-    text = pytesseract.image_to_string(image, lang="mar")
+    file = request.files['image']
 
+    try:
+        # Load and convert the image
+        image = Image.open(file.stream).convert("RGB")
+    except Exception:
+        return jsonify({'error': 'Unsupported image format/type'}), 400
+
+    # Extract text using pytesseract with Marathi language
+    try:
+        text = pytesseract.image_to_string(image, lang='mar')
+    except Exception as e:
+        return jsonify({'error': f'OCR failed: {str(e)}'}), 500
+
+    # Parse the extracted text
     rows = []
-    for line in text.strip().split("\n"):
-        if not line.strip():
-            continue
-        parts = line.split()
-        amount = ""
-        name = ""
-        village = ""
-        for part in parts:
-            if part.replace("₹", "").replace(",", "").isdigit():
-                amount = part.replace("₹", "")
-            elif not name:
-                name = part
-            else:
-                village += part + " "
-        rows.append({"रक्कम": amount, "नाव": name, "गाव": village.strip()})
+    for line in text.split('\n'):
+        parts = [p.strip() for p in line.split('–') if p.strip()]
+        if len(parts) >= 2:
+            name = parts[0]
+            amount = parts[1].replace('₹', '').strip() if '₹' in parts[1] else ''
+            village = parts[2] if len(parts) > 2 else ''
+            rows.append({'नाव': name, 'रक्कम': amount, 'गाव': village})
 
+    if not rows:
+        return jsonify({'error': 'No valid entries detected'}), 200
+
+    # Convert to Excel
     df = pd.DataFrame(rows)
     output = io.BytesIO()
     df.to_excel(output, index=False)
     output.seek(0)
 
-    return send_file(output, download_name="aher_output.xlsx", as_attachment=True)
+    return (
+        output.read(),
+        200,
+        {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': 'attachment; filename=aher_output.xlsx'
+        }
+    )
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host='0.0.0.0', port=10000, debug=True)
