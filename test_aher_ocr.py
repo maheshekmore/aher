@@ -1,6 +1,6 @@
 import requests
 
-API_URL = 'http://127.0.0.1:5000/extract'
+API_URL = 'https://aher.onrender.com/extract'
 image_path = 'sample_aher_image.jpg'  # Replace with your actual test image
 
 with open(image_path, 'rb') as img_file:
