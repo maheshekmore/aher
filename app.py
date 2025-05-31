@@ -1,57 +1,66 @@
-from flask import Flask, request, jsonify
+import os
+from flask import Flask, request, jsonify, send_file, render_template_string
 from PIL import Image
 import pytesseract
-import re
 import io
-import os
+import pandas as pd
 
 app = Flask(__name__)
 
-# Marathi OCR config
-def extract_text(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes))
-    text = pytesseract.image_to_string(image, lang='mar')
-    return text
+# HTML for basic frontend
+UPLOAD_FORM_HTML = """
+<!DOCTYPE html>
+<html lang="mr">
+<head>
+    <meta charset="UTF-8">
+    <title>अहेर OCR</title>
+</head>
+<body>
+    <h2>अहेर फोटो अपलोड करा (Marathi Handwriting)</h2>
+    <form action="/extract" method="post" enctype="multipart/form-data">
+        <input type="file" name="image" accept="image/*" required><br><br>
+        <input type="submit" value="OCR सुरू करा">
+    </form>
+</body>
+</html>
+"""
 
-# Basic Marathi aher parsing
-def parse_aher_text(text):
-    name_pattern = re.compile(r'(?:(?:नाम|श्री)[:\-\s]*)?([\u0900-\u097F ]{2,})')
-    amount_pattern = re.compile(r'([\u0966-\u096F]{1,5})')
-    village_pattern = re.compile(r'(?:गाव[:\-\s]*)([\u0900-\u097F ]{2,})')
+@app.route("/", methods=["GET"])
+def home():
+    return render_template_string(UPLOAD_FORM_HTML)
 
-    lines = text.strip().split('\n')
-    data = []
+@app.route("/extract", methods=["POST"])
+def extract_text():
+    if "image" not in request.files:
+        return "Image file is missing", 400
 
-    for line in lines:
+    image = Image.open(request.files["image"])
+    text = pytesseract.image_to_string(image, lang="mar")
+
+    rows = []
+    for line in text.strip().split("\n"):
         if not line.strip():
             continue
+        parts = line.split()
+        amount = ""
+        name = ""
+        village = ""
+        for part in parts:
+            if part.replace("₹", "").replace(",", "").isdigit():
+                amount = part.replace("₹", "")
+            elif not name:
+                name = part
+            else:
+                village += part + " "
+        rows.append({"रक्कम": amount, "नाव": name, "गाव": village.strip()})
 
-        name_match = name_pattern.search(line)
-        amount_match = amount_pattern.search(line)
-        village_match = village_pattern.search(line)
+    df = pd.DataFrame(rows)
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
 
-        entry = {
-            'name': name_match.group(1).strip() if name_match else '',
-            'amount': amount_match.group(1) if amount_match else '',
-            'village': village_match.group(1).strip() if village_match else ''
-        }
+    return send_file(output, download_name="aher_output.xlsx", as_attachment=True)
 
-        data.append(entry)
-
-    return data
-
-@app.route('/extract', methods=['POST'])
-def extract():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image uploaded'}), 400
-
-    image_file = request.files['image']
-    text = extract_text(image_file.read())
-    parsed_data = parse_aher_text(text)
-
-    return jsonify({'data': parsed_data})
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=10000, debug=True)
-
+    app.run(host="0.0.0.0", port=port, debug=True)
